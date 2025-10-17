@@ -1,0 +1,11 @@
+{
+  "name": "peppa-play",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter controller dev",
+    "dev:server": "pnpm --filter server dev",
+    "dev:controller": "pnpm --filter controller dev",
+    "build": "pnpm --recursive build"
+  }
+}

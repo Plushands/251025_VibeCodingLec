@@ -1,17 +1,26 @@
 import { Router } from 'express';
-import {
-  fetchChannelMediumVideos,
-  fetchVideoMeta,
-  fetchVideoMetas
-} from '../services/youtube';
+import { fetchChannelMediumVideos, fetchVideoMeta, fetchVideoMetas } from '../services/youtube';
 
 const router = Router();
-const PEPPAPIG_CHANNEL_ID = 'UC9coUxZloJ7PGesv1aJwPNg';
+const DEFAULT_CHANNEL_ID = 'UC9coUxZloJ7PGesv1aJwPNg';
 
 router.get('/', async (_req, res) => {
   try {
-    const items = await fetchChannelMediumVideos(PEPPAPIG_CHANNEL_ID, 8);
-    if (!items.length) return res.json({ videos: [] });
+    const channelId = process.env.PEPPA_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
+    let items = await fetchChannelMediumVideos(channelId, 20, { requireCaptions: true });
+    if (items.length < 8) {
+      const additional = await fetchChannelMediumVideos(channelId, 20, { requireCaptions: false });
+      const merged = new Map<string, typeof additional[number]>();
+      for (const item of [...items, ...additional]) {
+        if (!merged.has(item.id)) {
+          merged.set(item.id, item);
+        }
+      }
+      items = Array.from(merged.values());
+    }
+    if (!items.length) {
+      return res.json({ videos: [] });
+    }
 
     const metas = await fetchVideoMetas(items.map((i) => i.id));
 
@@ -42,7 +51,7 @@ router.get('/', async (_req, res) => {
       (video) => video.durationSec >= 600 && video.durationSec <= 960
     );
 
-    res.json({ videos: filtered });
+    res.json({ videos: filtered.slice(0, 8) });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

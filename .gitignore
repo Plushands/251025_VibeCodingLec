@@ -1,0 +1,16 @@
+# Dependencies
+node_modules
+apps/*/node_modules
+
+# Build output
+dist
+apps/*/dist
+
+# Environment files
+.env
+apps/*/.env
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*

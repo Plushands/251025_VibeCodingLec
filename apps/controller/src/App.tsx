@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
+
+function apiUrl(path: string) {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  if (!API_BASE_URL) {
+    return normalized;
+  }
+  return `${API_BASE_URL}${normalized}`;
+}
+
 const SLICE_MS = 8000;
 
 type TranscriptEntry = { text: string; ts: number };
@@ -138,6 +149,23 @@ export default function App() {
   const collectingRef = useRef(false);
   const autoplayPendingRef = useRef(false);
 
+  function resolveRecorderOptions(): MediaRecorderOptions | undefined {
+    if (
+      typeof window === "undefined" ||
+      typeof MediaRecorder === "undefined" ||
+      !MediaRecorder.isTypeSupported
+    ) {
+      return undefined;
+    }
+    const preferredTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4;codecs=mp4a.40.2", "audio/mp4"];
+    for (const mimeType of preferredTypes) {
+      if (MediaRecorder.isTypeSupported(mimeType)) {
+        return { mimeType };
+      }
+    }
+    return undefined;
+  }
+
   const highlightPairs: HighlightPair[] = useMemo(() => {
     const src = analysis?.analysis?.highlightPairs || analysis?.highlightPairs;
     if (!src) {
@@ -207,7 +235,7 @@ export default function App() {
   useEffect(() => {
     async function loadSuggestions() {
       try {
-        const res = await fetch("http://localhost:4000/suggestions");
+        const res = await fetch(apiUrl("/suggestions"));
         const json = await res.json();
         if (res.ok && Array.isArray(json.videos) && json.videos.length > 0) {
           const mapped: SuggestedVideo[] = json.videos
@@ -259,7 +287,7 @@ export default function App() {
     autoplayPendingRef.current = true;
 
     try {
-      const metaRes = await fetch(`http://localhost:4000/analyze?videoId=${encodeURIComponent(id)}`);
+      const metaRes = await fetch(apiUrl(`/analyze?videoId=${encodeURIComponent(id)}`));
       const metaJson = await metaRes.json();
       if (!metaRes.ok) {
         setError(metaJson.error || "Unable to fetch video details.");
@@ -312,7 +340,20 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      let options: MediaRecorderOptions | undefined;
+      try {
+        options = resolveRecorderOptions();
+      } catch {
+        options = undefined;
+      }
+      let recorder: MediaRecorder;
+      try {
+        recorder = options ? new MediaRecorder(stream, options) : new MediaRecorder(stream);
+      } catch (err) {
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        throw err;
+      }
       mediaRecorderRef.current = recorder;
       collectingRef.current = true;
       setIsCollecting(true);
@@ -345,7 +386,22 @@ export default function App() {
     } catch (err) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
-      setError(err instanceof Error ? err.message : "Could not access the microphone.");
+      let message = "Could not access the microphone.";
+      if (err instanceof DOMException) {
+        if (err.name === "NotAllowedError") {
+          message = "Microphone permission was denied. Allow access to start Whisper capture.";
+        } else if (err.name === "NotFoundError") {
+          message = "No microphone was found. Check your input device settings.";
+        } else if (err.name === "NotSupportedError" || err.message.includes("Invalid constraint")) {
+          message =
+            "This browser does not support the selected audio recording format. Try updating Safari or using Chrome.";
+        } else {
+          message = err.message || message;
+        }
+      } else if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      setError(message);
       setIsCollecting(false);
       collectingRef.current = false;
     }
@@ -368,7 +424,7 @@ export default function App() {
     const fd = new FormData();
     fd.append("audio", blob, `chunk-${idx}.webm`);
     try {
-      const stt = await fetch("http://localhost:4000/stt", { method: "POST", body: fd }).then((r) => r.json());
+      const stt = await fetch(apiUrl("/stt"), { method: "POST", body: fd }).then((r) => r.json());
       const text = (stt.text || "").trim();
       if (!text) {
         return;
@@ -397,7 +453,7 @@ export default function App() {
     setError("");
     setInfo("Mixing Whisper captions into highlight phrases...");
     try {
-      const res = await fetch("http://localhost:4000/analyze", {
+      const res = await fetch(apiUrl("/analyze"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoId: playingVideoId, transcript: transcripts })
